@@ -1,11 +1,12 @@
 const std = @import("std");
 const rl: type = @cImport(@cInclude("raylib.h"));
+const assert = std.debug.assert;
 
 const Vec3D = struct { x: f32, y: f32, z: f32 };
 
-const triangle = struct { vertices: [3]Vec3D };
+const Triangle = struct { vertices: [3]Vec3D };
 
-const mesh = struct { triangles: []triangle };
+const Mesh = struct { triangles: []Triangle };
 
 const Mat4x4 = struct { m: [4][4]f32 = std.mem.zeroes([4][4]f32) };
 
@@ -22,149 +23,240 @@ fn multiplyVec3D(output_vector: *Vec3D, input_vector: Vec3D, matrix: Mat4x4) !vo
     }
 }
 
-fn drawTriangle(tri: triangle, color: rl.Color) !void {
-    rl.DrawTriangleLines(
-        rl.Vector2{ .x = tri.vertices[0].x, .y = tri.vertices[0].y },
-        rl.Vector2{ .x = tri.vertices[1].x, .y = tri.vertices[1].y },
-        rl.Vector2{ .x = tri.vertices[2].x, .y = tri.vertices[2].y },
-        color
-    );
+fn dotProduct(v1: Vec3D, v2: Vec3D) f32 {
+    return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+}
+
+fn drawTriangle(tri: Triangle, color: rl.Color) !void {
+    rl.DrawTriangle(rl.Vector2{ .x = tri.vertices[0].x, .y = tri.vertices[0].y }, rl.Vector2{ .x = tri.vertices[1].x, .y = tri.vertices[1].y }, rl.Vector2{ .x = tri.vertices[2].x, .y = tri.vertices[2].y }, color);
+}
+
+fn makeMeshFromObj(file_path: []const u8) !Mesh {
+    const file = try std.fs.cwd().openFile(file_path, .{});
+    defer file.close();
+    
+    const allocator = std.heap.page_allocator;
+
+    var vertices = std.ArrayList(Vec3D).init(allocator);
+    defer vertices.deinit();
+
+    var triangles = std.ArrayList(Triangle).init(allocator);
+
+    var buf_reader = std.io.bufferedReader(file.reader());
+    var in_stream = buf_reader.reader();
+    var buf: [64]u8 = undefined;
+    while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+        var line_parts = std.mem.splitSequence(u8, line, " ");
+
+        while (line_parts.next()) |token| {
+            if (std.mem.eql(u8, token, "v")) {
+                var vertex = Vec3D{ .x = 0.0, .y = 0.0, .z = 0.0 };
+                vertex.x = try std.fmt.parseFloat(f32, line_parts.next().?);
+                vertex.y = try std.fmt.parseFloat(f32, line_parts.next().?);
+                vertex.z = try std.fmt.parseFloat(f32, line_parts.next().?);
+                try vertices.append(vertex);
+            } else if (std.mem.eql(u8, token, "f")) {
+                while (line_parts.next()) |faces| {
+                    var face_parts = std.mem.splitSequence(u8, faces, "/");
+                    const v1 = try std.fmt.parseInt(u32, face_parts.next().?, 10);
+                    const v2 = try std.fmt.parseInt(u32, face_parts.next().?, 10);
+                    const v3 = try std.fmt.parseInt(u32, face_parts.next().?, 10);
+
+                    const triangle = Triangle{ .vertices = [3]Vec3D{ vertices.items[v1 - 1], vertices.items[v2 - 1], vertices.items[v3 - 1] } };
+                    try triangles.append(triangle);
+                }
+            }
+        }
+    }
+    const mesh = Mesh{ .triangles = triangles.items };
+    return mesh;
 }
 
 pub fn main() !void {
     rl.InitWindow(800, 600, "Zig Engine");
     defer rl.CloseWindow();
 
-    const vertices = [_]Vec3D{
-        // Define vertices for a cube
-        // South face
-        Vec3D{ .x = 0, .y = 0, .z = 0 },
-        Vec3D{ .x = 0, .y = 1, .z = 0 },
-        Vec3D{ .x = 1, .y = 1, .z = 0 },
-        Vec3D{ .x = 0, .y = 0, .z = 0 },
-        Vec3D{ .x = 1, .y = 1, .z = 0 },
-        Vec3D{ .x = 1, .y = 0, .z = 0 },
+    // const vertices = [_]Vec3D{
+    //     // Define vertices for a cube
+    //     // South face
+    //     Vec3D{ .x = 0, .y = 0, .z = 0 },
+    //     Vec3D{ .x = 0, .y = 1, .z = 0 },
+    //     Vec3D{ .x = 1, .y = 1, .z = 0 },
+    //     Vec3D{ .x = 0, .y = 0, .z = 0 },
+    //     Vec3D{ .x = 1, .y = 1, .z = 0 },
+    //     Vec3D{ .x = 1, .y = 0, .z = 0 },
 
-        // East face
-        Vec3D{ .x = 1, .y = 0, .z = 0 },
-        Vec3D{ .x = 1, .y = 1, .z = 0 },
-        Vec3D{ .x = 1, .y = 1, .z = 1 },
-        Vec3D{ .x = 1, .y = 0, .z = 0 },
-        Vec3D{ .x = 1, .y = 1, .z = 1 },
-        Vec3D{ .x = 1, .y = 0, .z = 1 },
+    //     // East face
+    //     Vec3D{ .x = 1, .y = 0, .z = 0 },
+    //     Vec3D{ .x = 1, .y = 1, .z = 0 },
+    //     Vec3D{ .x = 1, .y = 1, .z = 1 },
+    //     Vec3D{ .x = 1, .y = 0, .z = 0 },
+    //     Vec3D{ .x = 1, .y = 1, .z = 1 },
+    //     Vec3D{ .x = 1, .y = 0, .z = 1 },
 
-        // North face
-        Vec3D{ .x = 1, .y = 0, .z = 1 },
-        Vec3D{ .x = 1, .y = 1, .z = 1 },
-        Vec3D{ .x = 0, .y = 1, .z = 1 },
-        Vec3D{ .x = 1, .y = 0, .z = 1 },
-        Vec3D{ .x = 0, .y = 1, .z = 1 },
-        Vec3D{ .x = 0, .y = 0, .z = 1 },
+    //     // North face
+    //     Vec3D{ .x = 1, .y = 0, .z = 1 },
+    //     Vec3D{ .x = 1, .y = 1, .z = 1 },
+    //     Vec3D{ .x = 0, .y = 1, .z = 1 },
+    //     Vec3D{ .x = 1, .y = 0, .z = 1 },
+    //     Vec3D{ .x = 0, .y = 1, .z = 1 },
+    //     Vec3D{ .x = 0, .y = 0, .z = 1 },
 
-        // West face
-        Vec3D{ .x = 0, .y = 0, .z = 1 },
-        Vec3D{ .x = 0, .y = 1, .z = 1 },
-        Vec3D{ .x = 0, .y = 1, .z = 0 },
-        Vec3D{ .x = 0, .y = 0, .z = 1 },
-        Vec3D{ .x = 0, .y = 1, .z = 0 },
-        Vec3D{ .x = 0, .y = 0, .z = 0 },
+    //     // West face
+    //     Vec3D{ .x = 0, .y = 0, .z = 1 },
+    //     Vec3D{ .x = 0, .y = 1, .z = 1 },
+    //     Vec3D{ .x = 0, .y = 1, .z = 0 },
+    //     Vec3D{ .x = 0, .y = 0, .z = 1 },
+    //     Vec3D{ .x = 0, .y = 1, .z = 0 },
+    //     Vec3D{ .x = 0, .y = 0, .z = 0 },
 
-        // Top face
-        Vec3D{ .x = 0, .y = 1, .z = 0 },
-        Vec3D{ .x = 0, .y = 1, .z = 1 },
-        Vec3D{ .x = 1, .y = 1, .z = 1 },
-        Vec3D{ .x = 0, .y = 1, .z = 0 },
-        Vec3D{ .x = 1, .y = 1, .z = 1 },
-        Vec3D{ .x = 1, .y = 1, .z = 0 },
+    //     // Top face
+    //     Vec3D{ .x = 0, .y = 1, .z = 0 },
+    //     Vec3D{ .x = 0, .y = 1, .z = 1 },
+    //     Vec3D{ .x = 1, .y = 1, .z = 1 },
+    //     Vec3D{ .x = 0, .y = 1, .z = 0 },
+    //     Vec3D{ .x = 1, .y = 1, .z = 1 },
+    //     Vec3D{ .x = 1, .y = 1, .z = 0 },
 
-        // Bottom face
-        Vec3D{ .x = 1, .y = 0, .z = 0 },
-        Vec3D{ .x = 1, .y = 0, .z = 1 },
-        Vec3D{ .x = 0, .y = 0, .z = 1 },
-        Vec3D{ .x = 1, .y = 0, .z = 0 },
-        Vec3D{ .x = 0, .y = 0, .z = 1 },
-        Vec3D{ .x = 0, .y = 0, .z = 0 },
-    };
+    //     // Bottom face
+    //     Vec3D{ .x = 1, .y = 0, .z = 0 },
+    //     Vec3D{ .x = 1, .y = 0, .z = 1 },
+    //     Vec3D{ .x = 0, .y = 0, .z = 1 },
+    //     Vec3D{ .x = 1, .y = 0, .z = 0 },
+    //     Vec3D{ .x = 0, .y = 0, .z = 1 },
+    //     Vec3D{ .x = 0, .y = 0, .z = 0 },
+    // };
 
-    var triangles = [_]triangle{
-        triangle{ .vertices = [3]Vec3D{ vertices[0], vertices[1], vertices[2] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[3], vertices[4], vertices[5] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[6], vertices[7], vertices[8] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[9], vertices[10], vertices[11] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[12], vertices[13], vertices[14] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[15], vertices[16], vertices[17] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[18], vertices[19], vertices[20] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[21], vertices[22], vertices[23] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[24], vertices[25], vertices[26] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[27], vertices[28], vertices[29] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[30], vertices[31], vertices[32] } },
-        triangle{ .vertices = [3]Vec3D{ vertices[33], vertices[34], vertices[35] } },
-    };
+    // var triangles = [_]Triangle{
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[0], vertices[1], vertices[2] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[3], vertices[4], vertices[5] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[6], vertices[7], vertices[8] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[9], vertices[10], vertices[11] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[12], vertices[13], vertices[14] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[15], vertices[16], vertices[17] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[18], vertices[19], vertices[20] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[21], vertices[22], vertices[23] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[24], vertices[25], vertices[26] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[27], vertices[28], vertices[29] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[30], vertices[31], vertices[32] } },
+    //     Triangle{ .vertices = [3]Vec3D{ vertices[33], vertices[34], vertices[35] } },
+    // };
 
     // rendering a cube
-    const mesh_to_render: mesh = mesh{ .triangles = &triangles };
+    const mesh_to_render: Mesh = try makeMeshFromObj("skull.obj");
 
     // Projection matrix
-    const near: f16 = 0.1;
+    const near: f16 = 0.001;
     const far: f16 = 1000.0;
     const fov: f16 = 90.0;
     const aspect_ratio: f16 = 800.0 / 600.0;
 
     const fov_rad: f16 = 1.0 / std.math.tan(std.math.degreesToRadians(fov / 2.0));
-    const projection_matrix: Mat4x4 = Mat4x4{ 
-        .m = [4][4]f32{
-            [4]f32{ fov_rad / aspect_ratio, 0.0, 0.0, 0.0 },
-            [4]f32{ 0.0, fov_rad, 0.0, 0.0 },
-            [4]f32{ 0.0, 0.0, far / (far - near), 1.0 },
-            [4]f32{ 0.0, 0.0, (-far * near) / (far - near), 0.0 },
-        } 
-    };
+    const projection_matrix: Mat4x4 = Mat4x4{ .m = [4][4]f32{
+        [4]f32{ fov_rad / aspect_ratio, 0.0, 0.0, 0.0 },
+        [4]f32{ 0.0, fov_rad, 0.0, 0.0 },
+        [4]f32{ 0.0, 0.0, far / (far - near), 1.0 },
+        [4]f32{ 0.0, 0.0, (-far * near) / (far - near), 0.0 },
+    } };
 
+    const cube_center: Vec3D = Vec3D{ .x = 0.5, .y = 0.5, .z = 0.5 };
+    const camera: Vec3D = Vec3D{ .x = 0.0, .y = 0.0, .z = 0.0 };
 
     while (!rl.WindowShouldClose()) {
         //calculate roatation matrices
         const time: f32 = @floatCast(rl.GetTime());
-        const rotation_x: Mat4x4 = Mat4x4{ 
-            .m = [4][4]f32{
-                [4]f32{ 1.0, 0.0, 0.0, 0.0 },
-                [4]f32{ 0.0, std.math.cos(time), -std.math.sin(time), 0.0 },
-                [4]f32{ 0.0, std.math.sin(time), std.math.cos(time), 0.0 },
-                [4]f32{ 0.0, 0.0, 0.0, 1.0 },
-            } 
-        };
-        const rotation_z: Mat4x4 = Mat4x4{ 
-            .m = [4][4]f32{
-                [4]f32{ std.math.cos(time), -std.math.sin(time), 0.0, 0.0 },
-                [4]f32{ std.math.sin(time), std.math.cos(time), 0.0, 0.0 },
-                [4]f32{ 0.0, 0.0, 1.0, 0.0 },
-                [4]f32{ 0.0, 0.0, 0.0, 1.0 },
-            } 
-        };
+        const rotation_x: Mat4x4 = Mat4x4{ .m = [4][4]f32{
+            [4]f32{ 1.0, 0.0, 0.0, 0.0 },
+            [4]f32{ 0.0, std.math.cos(time / 2), std.math.sin(time / 2), 0.0 },
+            [4]f32{ 0.0, -std.math.sin(time / 2), std.math.cos(time / 2), 0.0 },
+            [4]f32{ 0.0, 0.0, 0.0, 1.0 },
+        } };
+        const rotation_z: Mat4x4 = Mat4x4{ .m = [4][4]f32{
+            [4]f32{ std.math.cos(time), std.math.sin(time), 0.0, 0.0 },
+            [4]f32{ -std.math.sin(time), std.math.cos(time), 0.0, 0.0 },
+            [4]f32{ 0.0, 0.0, 1.0, 0.0 },
+            [4]f32{ 0.0, 0.0, 0.0, 1.0 },
+        } };
 
         rl.BeginDrawing();
         for (mesh_to_render.triangles) |mesh_triangle| {
-            var tri_roatated_x: triangle = mesh_triangle;
-            var tri_roatated_z: triangle = mesh_triangle;
+            var tri_translated_to_origin: Triangle = mesh_triangle;
+            var tri_roatated_x: Triangle = mesh_triangle;
+            var tri_roatated_z: Triangle = mesh_triangle;
 
-            try multiplyVec3D(&tri_roatated_x.vertices[0], mesh_triangle.vertices[0], rotation_x);
-            try multiplyVec3D(&tri_roatated_x.vertices[1], mesh_triangle.vertices[1], rotation_x);
-            try multiplyVec3D(&tri_roatated_x.vertices[2], mesh_triangle.vertices[2], rotation_x);
+            tri_translated_to_origin.vertices[0].x -= cube_center.x;
+            tri_translated_to_origin.vertices[0].y -= cube_center.y;
+            tri_translated_to_origin.vertices[0].z -= cube_center.z;
+            tri_translated_to_origin.vertices[1].x -= cube_center.x;
+            tri_translated_to_origin.vertices[1].y -= cube_center.y;
+            tri_translated_to_origin.vertices[1].z -= cube_center.z;
+            tri_translated_to_origin.vertices[2].x -= cube_center.x;
+            tri_translated_to_origin.vertices[2].y -= cube_center.y;
+            tri_translated_to_origin.vertices[2].z -= cube_center.z;
+
+            try multiplyVec3D(&tri_roatated_x.vertices[0], tri_translated_to_origin.vertices[0], rotation_x);
+            try multiplyVec3D(&tri_roatated_x.vertices[1], tri_translated_to_origin.vertices[1], rotation_x);
+            try multiplyVec3D(&tri_roatated_x.vertices[2], tri_translated_to_origin.vertices[2], rotation_x);
 
             try multiplyVec3D(&tri_roatated_z.vertices[0], tri_roatated_x.vertices[0], rotation_z);
             try multiplyVec3D(&tri_roatated_z.vertices[1], tri_roatated_x.vertices[1], rotation_z);
             try multiplyVec3D(&tri_roatated_z.vertices[2], tri_roatated_x.vertices[2], rotation_z);
 
-            var transformed_triangle = triangle{ 
-                .vertices = [3]Vec3D{
-                    Vec3D{ .x = 0, .y = 0, .z = 0 },
-                    Vec3D{ .x = 0, .y = 0, .z = 0 },
-                    Vec3D{ .x = 0, .y = 0, .z = 0 },
-                }   
-            };
+            var transformed_triangle = Triangle{ .vertices = [3]Vec3D{
+                Vec3D{ .x = 0, .y = 0, .z = 0 },
+                Vec3D{ .x = 0, .y = 0, .z = 0 },
+                Vec3D{ .x = 0, .y = 0, .z = 0 },
+            } };
             var translated_triangle = tri_roatated_z;
-            translated_triangle.vertices[0].z += 3.0;
-            translated_triangle.vertices[1].z += 3.0;
-            translated_triangle.vertices[2].z += 3.0;
+
+            translated_triangle.vertices[0].z += 8.0;
+            translated_triangle.vertices[1].z += 8.0;
+            translated_triangle.vertices[2].z += 8.0;
+
+            var normal: Vec3D = undefined;
+            var line1: Vec3D = undefined;
+            var line2: Vec3D = undefined;
+
+            line1.x = translated_triangle.vertices[1].x - translated_triangle.vertices[0].x;
+            line1.y = translated_triangle.vertices[1].y - translated_triangle.vertices[0].y;
+            line1.z = translated_triangle.vertices[1].z - translated_triangle.vertices[0].z;
+
+            line2.x = translated_triangle.vertices[2].x - translated_triangle.vertices[0].x;
+            line2.y = translated_triangle.vertices[2].y - translated_triangle.vertices[0].y;
+            line2.z = translated_triangle.vertices[2].z - translated_triangle.vertices[0].z;
+
+            normal.x = line1.y * line2.z - line1.z * line2.y;
+            normal.y = line1.z * line2.x - line1.x * line2.z;
+            normal.z = line1.x * line2.y - line1.y * line2.x;
+
+            const l: f32 = std.math.sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+            normal.x /= l;
+            normal.y /= l;
+            normal.z /= l;
+
+            const camera_ray: Vec3D = Vec3D{ .x = translated_triangle.vertices[0].x - camera.x, .y = translated_triangle.vertices[0].y - camera.y, .z = translated_triangle.vertices[0].z - camera.z };
+
+            if (dotProduct(camera_ray, normal) > 0.0) {
+                continue;
+            }
+
+            var light_direction: Vec3D = Vec3D{ .x = 0.0, .y = 0.0, .z = -1.0 };
+            const light_direction_vector_length: f32 = std.math.sqrt(light_direction.x * light_direction.x + light_direction.y * light_direction.y + light_direction.z * light_direction.z);
+            light_direction.x /= light_direction_vector_length;
+            light_direction.y /= light_direction_vector_length;
+            light_direction.z /= light_direction_vector_length;
+
+            var light_intensity: f32 = dotProduct(light_direction, normal);
+            light_intensity = std.math.clamp(light_intensity, -1.0, 1.0);
+
+            const normalized_intensity: f32 = (light_intensity + 1) / 2;
+
+            const color: rl.Color = rl.Color{
+                .a = 255,
+                .r = @intFromFloat(255 * normalized_intensity),
+                .g = @intFromFloat(255 * normalized_intensity),
+                .b = @intFromFloat(255 * normalized_intensity),
+            };
 
             try multiplyVec3D(&transformed_triangle.vertices[0], translated_triangle.vertices[0], projection_matrix);
             try multiplyVec3D(&transformed_triangle.vertices[1], translated_triangle.vertices[1], projection_matrix);
@@ -177,10 +269,10 @@ pub fn main() !void {
             transformed_triangle.vertices[2].x = (transformed_triangle.vertices[2].x + 1.0) * 0.5 * 800.0;
             transformed_triangle.vertices[2].y = (transformed_triangle.vertices[2].y + 1.0) * 0.5 * 600.0;
 
-            try drawTriangle(transformed_triangle, rl.RAYWHITE);
+            try drawTriangle(transformed_triangle, color);
         }
+
         rl.ClearBackground(rl.BLACK);
-        
         rl.DrawFPS(10, 10);
         rl.EndDrawing();
     }
