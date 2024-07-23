@@ -22,11 +22,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const obj_mod = b.dependency("obj", .{ .target = target, .optimize = optimize }).module("obj");
+    exe.root_module.addImport("obj", obj_mod);
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
     exe.linkSystemLibrary("raylib");
     exe.linkLibC();
+
     b.installArtifact(exe);
 
     // This *creates* a Run step in the build graph, to be executed when another

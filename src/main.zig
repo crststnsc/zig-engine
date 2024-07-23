@@ -1,5 +1,6 @@
 const std = @import("std");
 const rl: type = @cImport(@cInclude("raylib.h"));
+const obj: type = @import("obj");
 const assert = std.debug.assert;
 
 const Vec3D = struct { x: f32, y: f32, z: f32 };
@@ -31,45 +32,86 @@ fn drawTriangle(tri: Triangle, color: rl.Color) !void {
     rl.DrawTriangle(rl.Vector2{ .x = tri.vertices[0].x, .y = tri.vertices[0].y }, rl.Vector2{ .x = tri.vertices[1].x, .y = tri.vertices[1].y }, rl.Vector2{ .x = tri.vertices[2].x, .y = tri.vertices[2].y }, color);
 }
 
-fn makeMeshFromObj(file_path: []const u8) !Mesh {
-    const file = try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
-    
+fn makeMeshFromObj(comptime file_path: []const u8) !Mesh {
     const allocator = std.heap.page_allocator;
 
-    var vertices = std.ArrayList(Vec3D).init(allocator);
-    defer vertices.deinit();
+    const model = try obj.parseObj(allocator, @embedFile(file_path));
+
+    const vertices = model.vertices;
+    std.debug.print("Number of vertices: {}\n", .{vertices.len});
 
     var triangles = std.ArrayList(Triangle).init(allocator);
 
-    var buf_reader = std.io.bufferedReader(file.reader());
-    var in_stream = buf_reader.reader();
-    var buf: [64]u8 = undefined;
-    while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
-        var line_parts = std.mem.splitSequence(u8, line, " ");
+    for (model.meshes) |mesh| {
+        const indices = mesh.indices;
+        const indices_len = indices.len / 3;
+        for (0..indices_len) |i| {
+            const base_index = i * 3;
+  
+            const first_vertex_index: usize = @intCast(indices[base_index].vertex.?);
+            const second_vertex_index: usize = @intCast(indices[base_index + 1].vertex.?);
+            const third_vertex_index: usize = @intCast(indices[base_index + 2].vertex.?);
 
-        while (line_parts.next()) |token| {
-            if (std.mem.eql(u8, token, "v")) {
-                var vertex = Vec3D{ .x = 0.0, .y = 0.0, .z = 0.0 };
-                vertex.x = try std.fmt.parseFloat(f32, line_parts.next().?);
-                vertex.y = try std.fmt.parseFloat(f32, line_parts.next().?);
-                vertex.z = try std.fmt.parseFloat(f32, line_parts.next().?);
-                try vertices.append(vertex);
-            } else if (std.mem.eql(u8, token, "f")) {
-                while (line_parts.next()) |faces| {
-                    var face_parts = std.mem.splitSequence(u8, faces, "/");
-                    const v1 = try std.fmt.parseInt(u32, face_parts.next().?, 10);
-                    const v2 = try std.fmt.parseInt(u32, face_parts.next().?, 10);
-                    const v3 = try std.fmt.parseInt(u32, face_parts.next().?, 10);
-
-                    const triangle = Triangle{ .vertices = [3]Vec3D{ vertices.items[v1 - 1], vertices.items[v2 - 1], vertices.items[v3 - 1] } };
-                    try triangles.append(triangle);
-                }
-            }
+            const triangle = Triangle{
+                .vertices = [3]Vec3D{
+                    Vec3D{
+                        .x = vertices[first_vertex_index * 3],
+                        .y = vertices[first_vertex_index * 3 + 1],
+                        .z = vertices[first_vertex_index * 3 + 2],
+                    },
+                    Vec3D{
+                        .x = vertices[second_vertex_index * 3],
+                        .y = vertices[second_vertex_index * 3 + 1],
+                        .z = vertices[second_vertex_index * 3 + 2],
+                    },
+                    Vec3D{
+                        .x = vertices[third_vertex_index * 3],
+                        .y = vertices[third_vertex_index * 3 + 1],
+                        .z = vertices[third_vertex_index * 3 + 2],
+                    },
+                },
+            };
+            try triangles.append(triangle);
         }
     }
+
     const mesh = Mesh{ .triangles = triangles.items };
     return mesh;
+
+    // var vertices = std.ArrayList(Vec3D).init(allocator);
+    // defer vertices.deinit();
+
+    // var triangles = std.ArrayList(Triangle).init(allocator);
+
+    // var buf_reader = std.io.bufferedReader(file.reader());
+    // var in_stream = buf_reader.reader();
+    // var buf: [64]u8 = undefined;
+    // while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+    //     var line_parts = std.mem.splitSequence(u8, line, " ");
+
+    //     const first_token = line_parts.next().?;
+
+    //     if (std.mem.eql(u8, first_token, "v")) {
+    //         var vertex = Vec3D{ .x = 0.0, .y = 0.0, .z = 0.0 };
+    //         vertex.x = try std.fmt.parseFloat(f32, line_parts.next().?);
+    //         vertex.y = try std.fmt.parseFloat(f32, line_parts.next().?);
+    //         vertex.z = try std.fmt.parseFloat(f32, line_parts.next().?);
+    //         try vertices.append(vertex);
+    //     } else if (std.mem.eql(u8, first_token, "f")) {
+    //         while (line_parts.next()) |faces| {
+    //             var face_parts = std.mem.splitSequence(u8, faces, "/");
+    //             const v1 = try std.fmt.parseInt(u32, face_parts.next().?, 10);
+    //             const v2 = try std.fmt.parseInt(u32, face_parts.next().?, 10);
+    //             const v3 = try std.fmt.parseInt(u32, face_parts.next().?, 10);
+
+    //             const triangle = Triangle{ .vertices = [3]Vec3D{ vertices.items[v1 - 1], vertices.items[v2 - 1], vertices.items[v3 - 1] } };
+    //             try triangles.append(triangle);
+    //         }
+    //     }
+
+    // }
+    // const mesh = Mesh{ .triangles = triangles.items };
+    // return mesh;
 }
 
 pub fn main() !void {
@@ -179,6 +221,7 @@ pub fn main() !void {
         } };
 
         rl.BeginDrawing();
+
         for (mesh_to_render.triangles) |mesh_triangle| {
             var tri_translated_to_origin: Triangle = mesh_triangle;
             var tri_roatated_x: Triangle = mesh_triangle;
@@ -209,9 +252,9 @@ pub fn main() !void {
             } };
             var translated_triangle = tri_roatated_z;
 
-            translated_triangle.vertices[0].z += 8.0;
-            translated_triangle.vertices[1].z += 8.0;
-            translated_triangle.vertices[2].z += 8.0;
+            translated_triangle.vertices[0].z += 50.0;
+            translated_triangle.vertices[1].z += 50.0;
+            translated_triangle.vertices[2].z += 50.0;
 
             var normal: Vec3D = undefined;
             var line1: Vec3D = undefined;
