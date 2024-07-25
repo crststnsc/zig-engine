@@ -3,18 +3,32 @@ const rl: type = @cImport(@cInclude("raylib.h"));
 const obj: type = @import("obj");
 const assert = std.debug.assert;
 
-const Vec3D = struct { x: f32, y: f32, z: f32 };
+const Vec3D = struct { 
+    x: f32 = 0, 
+    y: f32 = 0, 
+    z: f32 = 0
+};
 
 const Triangle = struct {
     vertices: [3]Vec3D,
     color: rl.Color = rl.Color{ .r = 255, .g = 255, .b = 255, .a = 255 },
 };
-const TriangleWithColor = struct { vertices: [3]Vec3D, color: rl.Color };
 
-const Mesh = struct { triangles: []Triangle };
+const Mesh = struct {
+    triangles: std.ArrayList(Triangle),
 
-const Mat4x4 = struct {   
-    m: [4][4]f32 = std.mem.zeroes([4][4]f32), 
+    pub fn init(allocator: std.mem.Allocator) Mesh {
+        const triangles = std.ArrayList(Triangle).init(allocator);
+        return Mesh{ .triangles = triangles };
+    }
+
+    pub fn deinit(self: Mesh) void {
+        self.triangles.deinit();
+    }
+};
+
+const Mat4x4 = struct {
+    m: [4][4]f32 = std.mem.zeroes([4][4]f32),
 };
 
 fn multiplyVec3D(output_vector: *Vec3D, input_vector: Vec3D, matrix: Mat4x4) !void {
@@ -34,7 +48,7 @@ fn dotProduct(v1: Vec3D, v2: Vec3D) f32 {
     return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
 }
 
-fn  drawTriangle(tri: Triangle, color: rl.Color) !void {
+fn drawTriangle(tri: Triangle, color: rl.Color) !void {
     rl.DrawTriangle(rl.Vector2{ .x = tri.vertices[0].x, .y = tri.vertices[0].y }, rl.Vector2{ .x = tri.vertices[1].x, .y = tri.vertices[1].y }, rl.Vector2{ .x = tri.vertices[2].x, .y = tri.vertices[2].y }, color);
 }
 
@@ -45,7 +59,7 @@ fn compareTrianglesZ(_: void, t1: Triangle, t2: Triangle) bool {
 }
 
 fn makeMeshFromObj(comptime file_path: []const u8, allocator: std.mem.Allocator) !Mesh {
-    var triangles = std.ArrayList(Triangle).init(allocator);
+    var mesh_to_return = Mesh.init(allocator);
 
     const model = try obj.parseObj(allocator, @embedFile(file_path));
     const vertices = model.vertices;
@@ -80,7 +94,7 @@ fn makeMeshFromObj(comptime file_path: []const u8, allocator: std.mem.Allocator)
                         },
                     },
                 };
-                try triangles.append(triangle);
+                try mesh_to_return.triangles.append(triangle);
             } else if (num_verts > 3) {
                 // Handle polygons with more than 3 vertices by triangulating them
                 for (0..(num_verts - 2)) |i| {
@@ -107,7 +121,7 @@ fn makeMeshFromObj(comptime file_path: []const u8, allocator: std.mem.Allocator)
                             },
                         },
                     };
-                    try triangles.append(triangle);
+                    try mesh_to_return.triangles.append(triangle);
                 }
             }
 
@@ -115,25 +129,67 @@ fn makeMeshFromObj(comptime file_path: []const u8, allocator: std.mem.Allocator)
         }
     }
 
-    const mesh = Mesh{ .triangles = triangles.items };
-    return mesh;
+    return mesh_to_return;
+}
+
+fn renderTriangles(triangles: []Triangle) !void {
+    for (triangles) |triangle| {
+        try drawTriangle(triangle, triangle.color);
+    }
+}
+
+fn applyRotationX(triangle: *Triangle, rotation_value: f32) void {
+    const rotation_matrix_x: Mat4x4 = Mat4x4{ 
+        .m = [4][4]f32{
+            [4]f32{ 1.0, 0.0, 0.0, 0.0 },
+            [4]f32{ 0.0, std.math.cos(rotation_value), std.math.sin(rotation_value), 0.0 },
+            [4]f32{ 0.0, -std.math.sin(rotation_value), std.math.cos(rotation_value), 0.0 },
+            [4]f32{ 0.0, 0.0, 0.0, 1.0 },
+        } 
+    };
+
+    try multiplyVec3D(&triangle.vertices[0], triangle.vertices[0], rotation_matrix_x);
+    try multiplyVec3D(&triangle.vertices[1], triangle.vertices[1], rotation_matrix_x);
+    try multiplyVec3D(&triangle.vertices[2], triangle.vertices[2], rotation_matrix_x);
+}
+
+fn applyRotationZ(triangle: *Triangle, rotation_value: f32) void {
+    const rotation_matrix_z: Mat4x4 = Mat4x4{
+        .m = [4][4]f32{
+            [4]f32{ std.math.cos(rotation_value), std.math.sin(rotation_value), 0.0, 0.0 },
+            [4]f32{ -std.math.sin(rotation_value), std.math.cos(rotation_value), 0.0, 0.0 },
+            [4]f32{ 0.0, 0.0, 1.0, 0.0 },
+            [4]f32{ 0.0, 0.0, 0.0, 1.0 },
+        }   
+    };
+
+    try multiplyVec3D(&triangle.vertices[0], triangle.vertices[0], rotation_matrix_z);
+    try multiplyVec3D(&triangle.vertices[1], triangle.vertices[1], rotation_matrix_z);
+    try multiplyVec3D(&triangle.vertices[2], triangle.vertices[2], rotation_matrix_z);
 }
 
 pub fn main() !void {
-    rl.InitWindow(800, 600, "Zig Engine");
+    const window_width = 800;
+    const window_height = 600;
+
+    rl.InitWindow(window_width, window_height, "Zig Engine");
     defer rl.CloseWindow();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    // rendering a cube
+    // rendering mesh
     const mesh_to_render: Mesh = try makeMeshFromObj("tree.obj", allocator);
+    defer mesh_to_render.deinit();
+
+    const number_of_triangles = mesh_to_render.triangles.items.len;
+    std.debug.print("Number of triangles: {d}\n", .{number_of_triangles});
 
     // Projection matrix
     const near: f16 = 0.001;
     const far: f16 = 1000.0;
     const fov: f16 = 90.0;
-    const aspect_ratio: f16 = 800.0 / 600.0;
+    const aspect_ratio: f16 = window_width / window_height;
 
     const fov_rad: f16 = 1.0 / std.math.tan(std.math.degreesToRadians(fov / 2.0));
     const projection_matrix: Mat4x4 = Mat4x4{ .m = [4][4]f32{
@@ -143,46 +199,24 @@ pub fn main() !void {
         [4]f32{ 0.0, 0.0, (-far * near) / (far - near), 0.0 },
     } };
 
-    const camera: Vec3D = Vec3D{ .x = 0.0, .y = 0.0, .z = 0.0 };
+    const camera: Vec3D = Vec3D{ .x = 0.0, .y = 0.0, .z = -50 };
 
     var triangles_to_rasterize = std.ArrayList(Triangle).init(allocator);
-    rl.BeginDrawing();
+    defer triangles_to_rasterize.deinit();
 
     while (!rl.WindowShouldClose()) {
         const time: f32 = @floatCast(rl.GetTime());
-        const rotation_x: Mat4x4 = Mat4x4{ .m = [4][4]f32{
-            [4]f32{ 1.0, 0.0, 0.0, 0.0 },
-            [4]f32{ 0.0, std.math.cos(time / 2), std.math.sin(time / 2), 0.0 },
-            [4]f32{ 0.0, -std.math.sin(time / 2), std.math.cos(time / 2), 0.0 },
-            [4]f32{ 0.0, 0.0, 0.0, 1.0 },
-        } };
 
-        const rotation_z: Mat4x4 = Mat4x4{ .m = [4][4]f32{
-            [4]f32{ std.math.cos(time), std.math.sin(time), 0.0, 0.0 },
-            [4]f32{ -std.math.sin(time), std.math.cos(time), 0.0, 0.0 },
-            [4]f32{ 0.0, 0.0, 1.0, 0.0 },
-            [4]f32{ 0.0, 0.0, 0.0, 1.0 },
-        } };
-
-
-        for (mesh_to_render.triangles) |mesh_triangle| {
-            var tri_roatated_x: Triangle = mesh_triangle;
-            var tri_roatated_z: Triangle = mesh_triangle;
-
-            try multiplyVec3D(&tri_roatated_x.vertices[0], mesh_triangle.vertices[0], rotation_x);
-            try multiplyVec3D(&tri_roatated_x.vertices[1], mesh_triangle.vertices[1], rotation_x);
-            try multiplyVec3D(&tri_roatated_x.vertices[2], mesh_triangle.vertices[2], rotation_x);
-
-            try multiplyVec3D(&tri_roatated_z.vertices[0], tri_roatated_x.vertices[0], rotation_z);
-            try multiplyVec3D(&tri_roatated_z.vertices[1], tri_roatated_x.vertices[1], rotation_z);
-            try multiplyVec3D(&tri_roatated_z.vertices[2], tri_roatated_x.vertices[2], rotation_z);
+        for (mesh_to_render.triangles.items) |mesh_triangle| {
+            var rotated_triangle = mesh_triangle;
+            applyRotationX(&rotated_triangle, time);
 
             var transformed_triangle = Triangle{ .vertices = [3]Vec3D{
                 Vec3D{ .x = 0, .y = 0, .z = 0 },
                 Vec3D{ .x = 0, .y = 0, .z = 0 },
                 Vec3D{ .x = 0, .y = 0, .z = 0 },
             } };
-            var translated_triangle = tri_roatated_z;
+            var translated_triangle = rotated_triangle;
 
             translated_triangle.vertices[0].z += 50.0;
             translated_triangle.vertices[1].z += 50.0;
@@ -237,27 +271,25 @@ pub fn main() !void {
             try multiplyVec3D(&transformed_triangle.vertices[1], translated_triangle.vertices[1], projection_matrix);
             try multiplyVec3D(&transformed_triangle.vertices[2], translated_triangle.vertices[2], projection_matrix);
 
-            transformed_triangle.vertices[0].x = (transformed_triangle.vertices[0].x + 1.0) * 0.5 * 800.0;
-            transformed_triangle.vertices[0].y = (transformed_triangle.vertices[0].y + 1.0) * 0.5 * 600.0;
-            transformed_triangle.vertices[1].x = (transformed_triangle.vertices[1].x + 1.0) * 0.5 * 800.0;
-            transformed_triangle.vertices[1].y = (transformed_triangle.vertices[1].y + 1.0) * 0.5 * 600.0;
-            transformed_triangle.vertices[2].x = (transformed_triangle.vertices[2].x + 1.0) * 0.5 * 800.0;
-            transformed_triangle.vertices[2].y = (transformed_triangle.vertices[2].y + 1.0) * 0.5 * 600.0;
+            transformed_triangle.vertices[0].x = (transformed_triangle.vertices[0].x + 1.0) * 0.5 * window_width;
+            transformed_triangle.vertices[0].y = (transformed_triangle.vertices[0].y + 1.0) * 0.5 * window_height;
+            transformed_triangle.vertices[1].x = (transformed_triangle.vertices[1].x + 1.0) * 0.5 * window_width;
+            transformed_triangle.vertices[1].y = (transformed_triangle.vertices[1].y + 1.0) * 0.5 * window_height;
+            transformed_triangle.vertices[2].x = (transformed_triangle.vertices[2].x + 1.0) * 0.5 * window_width;
+            transformed_triangle.vertices[2].y = (transformed_triangle.vertices[2].y + 1.0) * 0.5 * window_height;
 
             transformed_triangle.color = color;
 
             try triangles_to_rasterize.append(transformed_triangle);
         }
-        std.sort.insertion(Triangle, triangles_to_rasterize.items, {}, compareTrianglesZ);
+        std.sort.pdq(Triangle, triangles_to_rasterize.items, {}, compareTrianglesZ);
 
-        for (triangles_to_rasterize.items) |triangle| {
-            try drawTriangle(triangle, triangle.color);
-        }
-        
-        triangles_to_rasterize.clearRetainingCapacity();
-
+        rl.BeginDrawing();
+        try renderTriangles(triangles_to_rasterize.items);
         rl.ClearBackground(rl.BLACK);
         rl.DrawFPS(10, 10);
         rl.EndDrawing();
+
+        triangles_to_rasterize.clearRetainingCapacity();
     }
 }
