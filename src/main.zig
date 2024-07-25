@@ -31,7 +31,7 @@ const Mat4x4 = struct {
     m: [4][4]f32 = std.mem.zeroes([4][4]f32),
 };
 
-fn multiplyVec3D(output_vector: *Vec3D, input_vector: Vec3D, matrix: Mat4x4) !void {
+fn multiplyVec3D(input_vector: Vec3D, output_vector: *Vec3D, matrix: Mat4x4) !void {
     output_vector.x = input_vector.x * matrix.m[0][0] + input_vector.y * matrix.m[1][0] + input_vector.z * matrix.m[2][0] + matrix.m[3][0];
     output_vector.y = input_vector.x * matrix.m[0][1] + input_vector.y * matrix.m[1][1] + input_vector.z * matrix.m[2][1] + matrix.m[3][1];
     output_vector.z = input_vector.x * matrix.m[0][2] + input_vector.y * matrix.m[1][2] + input_vector.z * matrix.m[2][2] + matrix.m[3][2];
@@ -148,9 +148,9 @@ fn applyRotationX(triangle: *Triangle, rotation_value: f32) void {
         } 
     };
 
-    try multiplyVec3D(&triangle.vertices[0], triangle.vertices[0], rotation_matrix_x);
-    try multiplyVec3D(&triangle.vertices[1], triangle.vertices[1], rotation_matrix_x);
-    try multiplyVec3D(&triangle.vertices[2], triangle.vertices[2], rotation_matrix_x);
+    try multiplyVec3D(triangle.vertices[0], &triangle.vertices[0], rotation_matrix_x);
+    try multiplyVec3D(triangle.vertices[1], &triangle.vertices[1], rotation_matrix_x);
+    try multiplyVec3D(triangle.vertices[2], &triangle.vertices[2], rotation_matrix_x);
 }
 
 fn applyRotationZ(triangle: *Triangle, rotation_value: f32) void {
@@ -163,9 +163,9 @@ fn applyRotationZ(triangle: *Triangle, rotation_value: f32) void {
         }   
     };
 
-    try multiplyVec3D(&triangle.vertices[0], triangle.vertices[0], rotation_matrix_z);
-    try multiplyVec3D(&triangle.vertices[1], triangle.vertices[1], rotation_matrix_z);
-    try multiplyVec3D(&triangle.vertices[2], triangle.vertices[2], rotation_matrix_z);
+    try multiplyVec3D(triangle.vertices[0], &triangle.vertices[0], rotation_matrix_z);
+    try multiplyVec3D(triangle.vertices[1], &triangle.vertices[1], rotation_matrix_z);
+    try multiplyVec3D(triangle.vertices[2], &triangle.vertices[2], rotation_matrix_z);
 }
 
 pub fn main() !void {
@@ -179,7 +179,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // rendering mesh
-    const mesh_to_render: Mesh = try makeMeshFromObj("tree.obj", allocator);
+    var mesh_to_render: Mesh = try makeMeshFromObj("tree.obj", allocator);
     defer mesh_to_render.deinit();
 
     const number_of_triangles = mesh_to_render.triangles.items.len;
@@ -199,7 +199,7 @@ pub fn main() !void {
         [4]f32{ 0.0, 0.0, (-far * near) / (far - near), 0.0 },
     } };
 
-    const camera: Vec3D = Vec3D{ .x = 0.0, .y = 0.0, .z = -50 };
+    const camera: Vec3D = Vec3D{ .x = 0.0, .y = 0.0, .z = -50.0 };
 
     var triangles_to_rasterize = std.ArrayList(Triangle).init(allocator);
     defer triangles_to_rasterize.deinit();
@@ -208,31 +208,26 @@ pub fn main() !void {
         const time: f32 = @floatCast(rl.GetTime());
 
         for (mesh_to_render.triangles.items) |mesh_triangle| {
-            var rotated_triangle = mesh_triangle;
-            applyRotationX(&rotated_triangle, time);
+            var triangle_to_process = mesh_triangle;
 
-            var transformed_triangle = Triangle{ .vertices = [3]Vec3D{
-                Vec3D{ .x = 0, .y = 0, .z = 0 },
-                Vec3D{ .x = 0, .y = 0, .z = 0 },
-                Vec3D{ .x = 0, .y = 0, .z = 0 },
-            } };
-            var translated_triangle = rotated_triangle;
+            applyRotationX(&triangle_to_process, time);
+            applyRotationZ(&triangle_to_process, time / 2);
 
-            translated_triangle.vertices[0].z += 50.0;
-            translated_triangle.vertices[1].z += 50.0;
-            translated_triangle.vertices[2].z += 50.0;
+            triangle_to_process.vertices[0].z += 50.0;
+            triangle_to_process.vertices[1].z += 50.0;
+            triangle_to_process.vertices[2].z += 50.0;
 
             var normal: Vec3D = undefined;
             var line1: Vec3D = undefined;
             var line2: Vec3D = undefined;
 
-            line1.x = translated_triangle.vertices[1].x - translated_triangle.vertices[0].x;
-            line1.y = translated_triangle.vertices[1].y - translated_triangle.vertices[0].y;
-            line1.z = translated_triangle.vertices[1].z - translated_triangle.vertices[0].z;
+            line1.x = triangle_to_process.vertices[1].x - triangle_to_process.vertices[0].x;
+            line1.y = triangle_to_process.vertices[1].y - triangle_to_process.vertices[0].y;
+            line1.z = triangle_to_process.vertices[1].z - triangle_to_process.vertices[0].z;
 
-            line2.x = translated_triangle.vertices[2].x - translated_triangle.vertices[0].x;
-            line2.y = translated_triangle.vertices[2].y - translated_triangle.vertices[0].y;
-            line2.z = translated_triangle.vertices[2].z - translated_triangle.vertices[0].z;
+            line2.x = triangle_to_process.vertices[2].x - triangle_to_process.vertices[0].x;
+            line2.y = triangle_to_process.vertices[2].y - triangle_to_process.vertices[0].y;
+            line2.z = triangle_to_process.vertices[2].z - triangle_to_process.vertices[0].z;
 
             normal.x = line1.y * line2.z - line1.z * line2.y;
             normal.y = line1.z * line2.x - line1.x * line2.z;
@@ -243,7 +238,7 @@ pub fn main() !void {
             normal.y /= l;
             normal.z /= l;
 
-            const camera_ray: Vec3D = Vec3D{ .x = translated_triangle.vertices[0].x - camera.x, .y = translated_triangle.vertices[0].y - camera.y, .z = translated_triangle.vertices[0].z - camera.z };
+            const camera_ray: Vec3D = Vec3D{ .x = triangle_to_process.vertices[0].x - camera.x, .y = triangle_to_process.vertices[0].y - camera.y, .z = triangle_to_process.vertices[0].z - camera.z };
 
             if (dotProduct(camera_ray, normal) > 0.0) {
                 continue;
@@ -267,20 +262,22 @@ pub fn main() !void {
                 .b = @intFromFloat(255 * normalized_intensity),
             };
 
-            try multiplyVec3D(&transformed_triangle.vertices[0], translated_triangle.vertices[0], projection_matrix);
-            try multiplyVec3D(&transformed_triangle.vertices[1], translated_triangle.vertices[1], projection_matrix);
-            try multiplyVec3D(&transformed_triangle.vertices[2], translated_triangle.vertices[2], projection_matrix);
+            var triangle_to_project: Triangle = triangle_to_process;
 
-            transformed_triangle.vertices[0].x = (transformed_triangle.vertices[0].x + 1.0) * 0.5 * window_width;
-            transformed_triangle.vertices[0].y = (transformed_triangle.vertices[0].y + 1.0) * 0.5 * window_height;
-            transformed_triangle.vertices[1].x = (transformed_triangle.vertices[1].x + 1.0) * 0.5 * window_width;
-            transformed_triangle.vertices[1].y = (transformed_triangle.vertices[1].y + 1.0) * 0.5 * window_height;
-            transformed_triangle.vertices[2].x = (transformed_triangle.vertices[2].x + 1.0) * 0.5 * window_width;
-            transformed_triangle.vertices[2].y = (transformed_triangle.vertices[2].y + 1.0) * 0.5 * window_height;
+            try multiplyVec3D(triangle_to_process.vertices[0], &triangle_to_project.vertices[0], projection_matrix);
+            try multiplyVec3D(triangle_to_process.vertices[1], &triangle_to_project.vertices[1], projection_matrix);
+            try multiplyVec3D(triangle_to_process.vertices[2], &triangle_to_project.vertices[2], projection_matrix);
 
-            transformed_triangle.color = color;
+            triangle_to_project.vertices[0].x = (triangle_to_project.vertices[0].x + 1.0) * 0.5 * window_width;
+            triangle_to_project.vertices[0].y = (triangle_to_project.vertices[0].y + 1.0) * 0.5 * window_height;
+            triangle_to_project.vertices[1].x = (triangle_to_project.vertices[1].x + 1.0) * 0.5 * window_width;
+            triangle_to_project.vertices[1].y = (triangle_to_project.vertices[1].y + 1.0) * 0.5 * window_height;
+            triangle_to_project.vertices[2].x = (triangle_to_project.vertices[2].x + 1.0) * 0.5 * window_width;
+            triangle_to_project.vertices[2].y = (triangle_to_project.vertices[2].y + 1.0) * 0.5 * window_height;
 
-            try triangles_to_rasterize.append(transformed_triangle);
+            triangle_to_project.color = color;
+
+            try triangles_to_rasterize.append(triangle_to_project);
         }
         std.sort.pdq(Triangle, triangles_to_rasterize.items, {}, compareTrianglesZ);
 
